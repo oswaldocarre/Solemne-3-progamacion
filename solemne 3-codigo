@@ -1,0 +1,131 @@
+import streamlit as st
+import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+
+# Claves de las APIs
+API_WEATHER = "57cbdcc20fb9c5ecb1291a35f081d1ff"
+API_NASA = "nL4hpa1P7kAaDwqhtFogKpefde6R9Z8r4H1MtHEG"
+NASA_IMAGES_API = "https://images-api.nasa.gov"  # Base URL for NASA Image and Video Library
+
+# Función para obtener datos climáticos
+def obtener_clima_ciudad(ciudad, api_key):
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={ciudad}&appid={api_key}&units=metric&lang=es"
+    respuesta = requests.get(url)
+    return respuesta.json() if respuesta.status_code == 200 else None
+
+# Función para obtener datos espaciales (imagen satelital)
+def obtener_imagen_satelital(api_key, lat, lon, fecha):
+    url = f"https://api.nasa.gov/planetary/earth/assets?lon={lon}&lat={lat}&date={fecha}&dim=0.1&api_key={api_key}"
+    respuesta = requests.get(url)
+    return respuesta.json() if respuesta.status_code == 200 else None
+
+# Función para realizar la búsqueda en la NASA Image and Video Library
+def buscar_imagenes_nasa(query):
+    url = f"{NASA_IMAGES_API}/search?q={query}"
+    respuesta = requests.get(url)
+    return respuesta.json() if respuesta.status_code == 200 else None
+
+# Función para graficar comparación de datos climáticos entre regiones
+def graficar_comparacion_climaticos(df_climaticos):
+    plt.figure(figsize=(15, 5))
+    plt.subplot(1, 3, 1)
+    df_climaticos.plot(kind='bar', x='Ciudad', y='Temperatura (°C)', ax=plt.gca(), color='orange')
+    plt.title("Temperaturas (°C) por Región")
+    plt.ylabel("Temperatura (°C)")
+
+    plt.subplot(1, 3, 2)
+    df_climaticos.plot(kind='bar', x='Ciudad', y='Humedad (%)', ax=plt.gca(), color='lightblue')
+    plt.title("Humedad (%) por Región")
+    plt.ylabel("Humedad (%)")
+
+    plt.subplot(1, 3, 3)
+    df_climaticos.plot(kind='bar', x='Ciudad', y='Velocidad del Viento (m/s)', ax=plt.gca(), color='lightgreen')
+    plt.title("Velocidad del Viento (m/s) por Región")
+    plt.ylabel("Velocidad (m/s)")
+
+    plt.tight_layout()
+    st.pyplot(plt.gcf())
+
+# Dashboard interactivo
+def mostrar_dashboard():
+    st.title("Datos Climáticos y Espaciales de Chile")
+
+    # Selección de regiones (multiselect)
+    regiones_seleccionadas = st.sidebar.multiselect(
+        "Selecciona las regiones de Chile",
+        ["Antofagasta", "Atacama", "Santiago", "Concepción", "Osorno", "Punta Arenas", "Valparaíso", "La Serena"]
+    )
+
+    # Selección de rango de fechas
+    fecha_inicio = st.sidebar.date_input("Fecha de inicio", datetime.today() - timedelta(days=7))
+    fecha_fin = st.sidebar.date_input("Fecha de fin", datetime.today())
+
+    # Coordenadas según región
+    coordenadas = {
+        "Valparaíso": (-33.0458, -71.6197),
+        "Santiago": (-33.4489, -70.6693),
+        "Atacama": (-27.500, -70.000),
+        "Antofagasta": (-23.6500, -70.4000),
+        "Osorno": (-40.567, -73.150),
+        "Punta Arenas": (-53.1638, -70.9171),
+        "Concepción": (-36.82699, -73.04977),
+        "La Serena": (-29.9046, -71.2483)
+    }
+
+    datos_climaticos = []
+
+    # Obtener datos climáticos de cada región seleccionada
+    for ciudad in regiones_seleccionadas:
+        st.subheader(f"Clima actual en {ciudad}")
+        clima = obtener_clima_ciudad(ciudad, API_WEATHER)
+        if clima:
+            datos_climaticos.append({
+                'Ciudad': ciudad,
+                'Temperatura (°C)': clima['main']['temp'],
+                'Humedad (%)': clima['main']['humidity'],
+                'Velocidad del Viento (m/s)': clima['wind']['speed']
+            })
+            st.write(f"**Temperatura**: {clima['main']['temp']} °C")
+            st.write(f"**Humedad**: {clima['main']['humidity']}%")
+            st.write(f"**Condiciones**: {clima['weather'][0]['description'].capitalize()}")
+            st.write(f"**Descripción del clima**: {clima['weather'][0]['main']}")
+        else:
+            st.error(f"No se pudieron obtener los datos climáticos de {ciudad}.")
+
+    # Mostrar gráficos de comparación si hay datos
+    if datos_climaticos:
+        df_climaticos = pd.DataFrame(datos_climaticos)
+        st.subheader("Comparación de Datos Climáticos entre Regiones")
+        graficar_comparacion_climaticos(df_climaticos)
+
+    # Obtener imagen satelital
+    if regiones_seleccionadas:
+        st.subheader(f"Imagen Satelital de {', '.join(regiones_seleccionadas)} ({fecha_inicio} a {fecha_fin})")
+        for ciudad in regiones_seleccionadas:
+            lat, lon = coordenadas[ciudad]
+            imagen = obtener_imagen_satelital(API_NASA, lat, lon, fecha_fin.strftime('%Y-%m-%d'))
+            if imagen and "url" in imagen:
+                st.image(imagen["url"], caption=f"Imagen satelital de {ciudad}")
+            else:
+                st.warning(f"No se encontraron imágenes para {ciudad} en el rango de fechas seleccionado.")
+
+    # Buscar en la NASA Image and Video Library
+    st.subheader("Buscar en la NASA Image and Video Library")
+    query = st.text_input("Introduce un término de búsqueda", "")
+    if query:
+        resultados = buscar_imagenes_nasa(query)
+        if resultados and 'collection' in resultados:
+            st.write(f"Se encontraron {resultados['collection']['metadata']['total_hits']} resultados.")
+            for item in resultados['collection']['items']:
+                if 'links' in item:
+                    st.image(item['links'][0]['href'], caption=item['data'][0]['title'])
+                    st.write(f"**Descripción**: {item['data'][0].get('description', 'No disponible')}")
+                    st.write(f"[Ver más información]({item['links'][0]['href']})")
+        else:
+            st.warning("No se encontraron resultados para la búsqueda.")
+
+# Ejecutar la aplicación
+if __name__ == "__main__":
+    mostrar_dashboard()
